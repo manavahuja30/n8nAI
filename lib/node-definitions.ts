@@ -412,4 +412,33 @@ import {
         },
       ],
     },
+
+    switch: {
+      type: "switch",
+      label: "Switch",
+      description: "Route based on matching cases",
+      category: "logic",
+      icon: GitBranch,
+      color: "bg-teal-500",
+      defaultConfig: {
+        property: "input.status",
+        cases: "success\npending\nfailed",
+      },
+      configFields: [
+        {
+          name: "property",
+          label: "Property Path",
+          type: "text",
+          placeholder: "input.status",
+          required: true,
+        },
+        {
+          name: "cases",
+          label: "Cases (one per line)",
+          type: "textarea",
+          placeholder: "success\npending\nfailed",
+          required: true,
+        },
+      ],
+    },
   };

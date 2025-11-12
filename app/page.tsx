@@ -13,7 +13,6 @@ import ReactFlow, {
   OnNodesChange,
   OnEdgesChange,
   Panel,
-  Edge,
 } from "reactflow";
 import "reactflow/dist/style.css";
 
@@ -22,8 +21,19 @@ import customNode from "@/components/customNode";
 import NodeConfigPanel from "@/components/NodeConfigPanel";
 import { useWorkflowStore } from "@/lib/store";
 import { nodeDefinitions } from "@/lib/node-definitions";
-import { WorkflowNode, NodeData } from "@/lib/types";
+import {
+  WorkflowNode,
+  NodeData,
+  WorkflowEdge,
+} from "@/lib/types";
 import { WorkflowExecutor } from "@/lib/executor";
+import ExecutionHistoryPanel from "@/components/ExecutionHistoryPanel";
+import { 
+  saveExecutionLog, 
+  ExecutionLog, 
+  ExecutionNodeResult 
+} from "@/lib/execution-history";
+import { getNodeOutputHandles } from "@/lib/node-helpers";
 
 const nodeTypes: NodeTypes = {
   custom: customNode,
@@ -61,18 +71,48 @@ export default function Home() {
     y: number;
     nodeId: string;
   } | null>(null);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
 
   const onConnect: OnConnect = useCallback(
     (connection: Connection) => {
-      const edge = {
-        ...connection,
-        id: `e${connection.source}-${connection.target}`,
+      if (!connection.source || !connection.target) {
+        return;
+      }
+
+      const sourceNode = nodes.find((node) => node.id === connection.source);
+      const outputHandles = sourceNode
+        ? getNodeOutputHandles(sourceNode.data.type, sourceNode.data.config)
+        : null;
+
+      const handleMeta = outputHandles?.find(
+        (handle) => handle.id === connection.sourceHandle
+      );
+
+      const uniqueId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+      const { source, target, sourceHandle, targetHandle } = connection;
+
+      const edge: WorkflowEdge = {
+        source: source!,
+        target: target!,
+        sourceHandle,
+        targetHandle,
+        id: `e-${source}-${sourceHandle || "default"}-${target}-${uniqueId}`,
         type: "smoothstep",
         animated: true,
+        label: handleMeta?.edgeLabel,
+        data: {
+          branch: sourceHandle || undefined,
+          displayLabel: handleMeta?.edgeLabel,
+        },
       };
-      addEdge(edge as any);
+
+      addEdge(edge);
     },
-    [addEdge]
+    [addEdge, nodes]
   );
 
   const handleNodesChange: OnNodesChange = useCallback(
@@ -324,27 +364,25 @@ export default function Home() {
     }
   }, [contextMenu]);
 
-  const executeWorkflow = async () => {
-    if (nodes.length === 0) {
-      alert("Add some nodes to the canvas first!");
+  const executeWorkflow = useCallback(async () => {
+    if (!nodes || nodes.length === 0) {
+      window.alert("Add some nodes to the canvas first!");
       return;
     }
-
+  
     setIsExecuting(true);
-    const executor = new WorkflowExecutor();
 
-    // Find trigger nodes (nodes with no incoming edges)
+    const executor = new WorkflowExecutor();
+    const startTime = Date.now();
     const triggerNodes = nodes.filter(
       (node) => !edges.some((edge: any) => edge.target === node.id)
     );
-
+  
     if (triggerNodes.length === 0) {
       alert("Add a trigger node to start the workflow!");
       setIsExecuting(false);
       return;
     }
-
-    // Reset all nodes
     nodes.forEach((node) => {
       updateNode(node.id, {
         output: undefined,
@@ -353,9 +391,11 @@ export default function Home() {
       });
     });
 
-    // Execute nodes in order
+    const executionResults: ExecutionNodeResult[] = [];
     const executedNodes = new Set<string>();
     const nodeOutputs: Record<string, any> = {};
+    let hasError = false;
+    let errorMessage = "";
 
     const executeNodeChain = async (nodeId: string, input: any = null) => {
       if (executedNodes.has(nodeId)) return;
@@ -364,6 +404,7 @@ export default function Home() {
       if (!node) return;
 
       executedNodes.add(nodeId);
+      const nodeStartTime = Date.now();
       updateNode(nodeId, { isExecuting: true, error: undefined });
 
       try {
@@ -374,6 +415,8 @@ export default function Home() {
           previousNodes: nodeOutputs,
         });
 
+        const nodeDuration = Date.now() - nodeStartTime;
+
         if (result.success) {
           updateNode(nodeId, {
             output: result.output,
@@ -381,41 +424,117 @@ export default function Home() {
           });
           nodeOutputs[nodeId] = result.output;
 
-          // Find and execute connected nodes
-          const connectedEdges = edges.filter((edge: any) => (edge as any).source === nodeId);
-          for (const edge of connectedEdges) {
-            await executeNodeChain((edge as any).target, result.output);
+          executionResults.push({
+            nodeId: node.id,
+            nodeName: node.data.label,
+            status: "success",
+            output: result.output,
+            duration: nodeDuration,
+          });
+
+          const connectedEdges = edges.filter(
+            (edge) => edge.source === nodeId
+          );
+
+          let edgesToTraverse = connectedEdges;
+          const branch = (result.output as any)?.branch;
+
+          if (branch && connectedEdges.length > 0) {
+            const branchMatches = connectedEdges.filter(
+              (edge) => edge.data?.branch === branch
+            );
+
+            if (branchMatches.length > 0) {
+              edgesToTraverse = branchMatches;
+            } else {
+              const defaultEdges = connectedEdges.filter(
+                (edge) => edge.data?.branch === "default"
+              );
+
+              if (defaultEdges.length > 0) {
+                edgesToTraverse = defaultEdges;
+              } else {
+                const unassignedEdges = connectedEdges.filter(
+                  (edge) => !edge.data?.branch
+                );
+
+                edgesToTraverse = unassignedEdges;
+              }
+            }
+          }
+
+          for (const edge of edgesToTraverse) {
+            await executeNodeChain(edge.target, result.output);
           }
         } else {
           updateNode(nodeId, {
             error: result.error,
             isExecuting: false,
           });
+
+          hasError = true;
+          errorMessage = result.error || "Unknown error";
+          executionResults.push({
+            nodeId: node.id,
+            nodeName: node.data.label,
+            status: "error",
+            error: result.error,
+            duration: nodeDuration,
+          });
         }
       } catch (error: any) {
+        const nodeDuration = Date.now() - nodeStartTime;
+        const errorMsg = error.message || "Execution failed";
+
         updateNode(nodeId, {
-          error: error.message || "Execution failed",
+          error: errorMsg,
           isExecuting: false,
+        });
+
+        hasError = true;
+        errorMessage = errorMsg;
+        executionResults.push({
+          nodeId: node.id,
+          nodeName: node.data.label,
+          status: "error",
+          error: errorMsg,
+          duration: nodeDuration,
         });
       }
     };
 
-    // Execute from each trigger
     for (const triggerNode of triggerNodes) {
       await executeNodeChain(triggerNode.id);
     }
 
+    const totalDuration = Date.now() - startTime;
     setIsExecuting(false);
-  };
 
+    const executionLog: ExecutionLog = {
+      id: `exec-${Date.now()}`,
+      timestamp: startTime,
+      duration: totalDuration,
+      status: hasError ? "error" : "success",
+      nodesExecuted: executedNodes.size,
+      totalNodes: nodes.length,
+      results: executionResults,
+      errorMessage: hasError ? errorMessage : undefined,
+    };
+
+    saveExecutionLog(executionLog);
+  }, [edges, nodes, updateNode]);
   return (
     <div className="flex h-screen w-screen bg-gray-100 dark:bg-gray-950">
-      <Sidebar onExecute={executeWorkflow} isExecuting={isExecuting} />
+      <Sidebar
+        onExecute={executeWorkflow}
+        onShowHistory={() => setShowHistoryPanel(true)}
+        isExecuting={isExecuting}
+      />
 
       <div className="flex-1" ref={reactFlowWrapper}>
         <ReactFlow
           nodes={nodes}
-          edges={edges as Edge[]}
+          edges={edges}
           onNodesChange={handleNodesChange}
           onEdgesChange={handleEdgesChange}
           onConnect={onConnect}
@@ -485,6 +604,10 @@ export default function Home() {
             <span>🗑️</span> Delete
           </button>
         </div>
+      )}
+
+      {showHistoryPanel && (
+        <ExecutionHistoryPanel onClose={() => setShowHistoryPanel(false)} />
       )}
     </div>
   );

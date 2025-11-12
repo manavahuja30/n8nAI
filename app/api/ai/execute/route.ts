@@ -2,39 +2,83 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 
-// Helper function to replace template variables
-function replaceTemplateVariables(text: string, input: any): string {
-  if (!text || typeof text !== "string") return text;
+// Helper functions to resolve template variables
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
 
-  // Replace {{input}} with the whole input
-  let result = text.replace(
-    /\{\{input\}\}/g,
-    typeof input === "object" ? JSON.stringify(input) : String(input)
-  );
+const stringifyValue = (value: unknown): string =>
+  isObject(value) ? JSON.stringify(value) : String(value);
 
-  // Replace {{input.field}} or {{input.nested.field}} with specific fields
-  result = result.replace(
-    /\{\{input\.([^}]+)\}\}/g,
-    (match: string, path: string) => {
-      const fields = path.split(".");
-      let value = input;
-      for (const field of fields) {
-        if (value && typeof value === "object" && field in value) {
-          value = value[field];
-        } else {
-          return match; // Keep original if path doesn't exist
-        }
-      }
-      return typeof value === "object" ? JSON.stringify(value) : String(value);
+const resolvePath = (source: unknown, path: string): unknown => {
+  if (!path) return source;
+
+  const sanitized = path
+    .replace(/\[(\w+)\]/g, ".$1")
+    .replace(/^\./, "");
+
+  const segments = sanitized.split(".").filter(Boolean);
+
+  return segments.reduce<unknown>((acc, key) => {
+    if (acc === undefined || acc === null) {
+      return undefined;
     }
-  );
 
-  return result;
+    if (Array.isArray(acc)) {
+      const index = Number(key);
+      return Number.isInteger(index) ? acc[index] : undefined;
+    }
+
+    if (isObject(acc)) {
+      return acc[key];
+    }
+
+    return undefined;
+  }, source);
+};
+
+function replaceTemplateVariables(
+  text: unknown,
+  input: unknown,
+  previousNodes: Record<string, unknown> = {}
+): string {
+  if (typeof text !== "string") {
+    return String(text ?? "");
+  }
+
+  return text.replace(/\{\{([^}]+)\}\}/g, (match, rawPath) => {
+    const trimmedPath = rawPath.trim();
+    if (!trimmedPath) {
+      return match;
+    }
+
+    if (trimmedPath === "input") {
+      return stringifyValue(input);
+    }
+
+    if (trimmedPath.startsWith("input.")) {
+      const value = resolvePath(input, trimmedPath.slice(6));
+      return value !== undefined && value !== null ? stringifyValue(value) : match;
+    }
+
+    const [nodeId, ...rest] = trimmedPath.split(".");
+    if (nodeId) {
+      const nodeOutput = previousNodes[nodeId];
+      if (nodeOutput !== undefined) {
+        if (rest.length === 0) {
+          return stringifyValue(nodeOutput);
+        }
+        const value = resolvePath(nodeOutput, rest.join("."));
+        return value !== undefined && value !== null ? stringifyValue(value) : match;
+      }
+    }
+
+    return match;
+  });
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { type, config, input } = await request.json();
+    const { type, config, input, previousNodes = {} } = await request.json();
 
     // Get API key from environment
     const geminiOpenAIKey = process.env.GEMINI_OPENAI_API_KEY;
@@ -81,6 +125,7 @@ export async function POST(request: NextRequest) {
         result = await executeTextGenerator(
           config,
           input,
+          previousNodes,
           genAI,
           openaiClient,
           modelName,
@@ -89,17 +134,34 @@ export async function POST(request: NextRequest) {
         break;
 
       case "aiAnalyzer":
-        result = await executeAnalyzer(config, input, genAI, openaiClient, modelName, useOpenAICompatible);
+        result = await executeAnalyzer(
+          config,
+          input,
+          previousNodes,
+          genAI,
+          openaiClient,
+          modelName,
+          useOpenAICompatible
+        );
         break;
 
       case "aiChatbot":
-        result = await executeChatbot(config, input, genAI, openaiClient, modelName, useOpenAICompatible);
+        result = await executeChatbot(
+          config,
+          input,
+          previousNodes,
+          genAI,
+          openaiClient,
+          modelName,
+          useOpenAICompatible
+        );
         break;
 
       case "aiDataExtractor":
         result = await executeDataExtractor(
           config,
           input,
+          previousNodes,
           genAI,
           openaiClient,
           modelName,
@@ -173,6 +235,7 @@ export async function POST(request: NextRequest) {
 async function executeTextGenerator(
   config: any,
   input: any,
+  previousNodes: Record<string, any>,
   genAI: GoogleGenAI,
   openaiClient: OpenAI | null,
   modelName: string,
@@ -181,7 +244,7 @@ async function executeTextGenerator(
   let { prompt, temperature, maxTokens } = config;
 
   // Replace template variables in prompt
-  prompt = replaceTemplateVariables(prompt, input);
+  prompt = replaceTemplateVariables(prompt, input, previousNodes);
 
   // If input is provided and prompt doesn't include it, append it
   if (input && !prompt.includes("{{input}}")) {
@@ -300,6 +363,7 @@ async function callGeminiAPI(
 async function executeAnalyzer(
   config: any,
   input: any,
+  previousNodes: Record<string, any>,
   genAI: GoogleGenAI,
   openaiClient: OpenAI | null,
   modelName: string,
@@ -308,7 +372,7 @@ async function executeAnalyzer(
   let { text, analysisType } = config;
 
   // Process template variables in text
-  text = replaceTemplateVariables(text, input);
+  text = replaceTemplateVariables(text, input, previousNodes);
 
   // If input is provided and text doesn't include it, use input
   if (input && !text) {
@@ -362,6 +426,7 @@ async function executeAnalyzer(
 async function executeChatbot(
   config: any,
   input: any,
+  previousNodes: Record<string, any>,
   genAI: GoogleGenAI,
   openaiClient: OpenAI | null,
   modelName: string,
@@ -370,8 +435,8 @@ async function executeChatbot(
   let { systemPrompt, userMessage, personality } = config;
 
   // Process template variables
-  systemPrompt = replaceTemplateVariables(systemPrompt, input);
-  userMessage = replaceTemplateVariables(userMessage, input);
+  systemPrompt = replaceTemplateVariables(systemPrompt, input, previousNodes);
+  userMessage = replaceTemplateVariables(userMessage, input, previousNodes);
 
   // If input is provided and userMessage doesn't include it, use input
   if (input && !userMessage) {
@@ -412,6 +477,7 @@ async function executeChatbot(
 async function executeDataExtractor(
   config: any,
   input: any,
+  previousNodes: Record<string, any>,
   genAI: GoogleGenAI,
   openaiClient: OpenAI | null,
   modelName: string,
@@ -420,8 +486,8 @@ async function executeDataExtractor(
   let { text, schema } = config;
 
   // Process template variables
-  text = replaceTemplateVariables(text, input);
-  schema = replaceTemplateVariables(schema, input);
+  text = replaceTemplateVariables(text, input, previousNodes);
+  schema = replaceTemplateVariables(schema, input, previousNodes);
 
   // If input is provided and text doesn't include it, use input
   if (input && !text) {

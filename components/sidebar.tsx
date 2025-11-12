@@ -1,17 +1,30 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { nodeDefinitions, NodeDefinition } from "@/lib/node-definitions";
-import { Play, Trash2, Save, FolderOpen, Download, Upload, Undo2, Redo2 } from "lucide-react";
+import {
+  Play,
+  Trash2,
+  Save,
+  FolderOpen,
+  Download,
+  Upload,
+  Undo2,
+  Redo2,
+  Search,
+  X,
+  Clock,
+} from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useWorkflowStore } from "@/lib/store";
 
 interface SidebarProps {
-  onExecute: () => void;
+  onExecute: () => void | Promise<void>;
+  onShowHistory: () => void;
   isExecuting: boolean;
 }
 
-export default function Sidebar({ onExecute, isExecuting }: SidebarProps) {
+export default function Sidebar({ onExecute, onShowHistory, isExecuting }: SidebarProps) {
   const {
     clearWorkflow,
     saveWorkflow,
@@ -30,6 +43,9 @@ export default function Sidebar({ onExecute, isExecuting }: SidebarProps) {
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [workflowName, setWorkflowName] = useState("");
   const [showLoadDialog, setShowLoadDialog] = useState(false);
+
+  //search Node in sidebar.
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     setSavedWorkflows(getSavedWorkflows());
@@ -113,6 +129,33 @@ export default function Sidebar({ onExecute, isExecuting }: SidebarProps) {
     return acc;
   }, {} as Record<string, NodeDefinition[]>);
 
+  const filteredGroupedNodes = useMemo(() => {
+    if (!searchQuery.trim()) return groupedNodes;
+
+    const query = searchQuery.toLowerCase();
+    const filtered: Record<string, NodeDefinition[]> = {};
+
+    Object.entries(groupedNodes).forEach(([category, nodes]) => {
+      const matchingNodes = nodes.filter(
+        (node) =>
+          node.label.toLowerCase().includes(query) ||
+          node.description.toLowerCase().includes(query) ||
+          node.type.toLowerCase().includes(query)
+      );
+
+      if (matchingNodes.length > 0) {
+        filtered[category] = matchingNodes;
+      }
+    });
+
+    return filtered;
+  }, [groupedNodes, searchQuery]);
+
+  const totalFilteredNodes = Object.values(filteredGroupedNodes).reduce(
+    (sum, nodes) => sum + nodes.length,
+    0
+  );
+
   return (
     <div className="w-80 bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 p-4 overflow-y-auto">
       <div className="mb-6">
@@ -191,8 +234,43 @@ export default function Sidebar({ onExecute, isExecuting }: SidebarProps) {
               <Upload className="h-4 w-4 mr-1" />
               Import
             </Button>
+            <Button
+              onClick={onShowHistory}
+              variant="outline"
+              size="sm"
+              title="View execution history"
+            >
+              <Clock className="h-4 w-4 mr-1" />
+              History
+            </Button>
           </div>
         </div>
+      </div>
+
+      <div className="mb-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search nodes..."
+            className="w-full pl-9 pr-9 py-2 text-sm border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+        {searchQuery && (
+          <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+            Found {totalFilteredNodes} node{totalFilteredNodes !== 1 ? "s" : ""}
+          </div>
+        )}
       </div>
 
       {showSaveDialog && (
@@ -279,39 +357,49 @@ export default function Sidebar({ onExecute, isExecuting }: SidebarProps) {
         </div>
       )}
 
-      {Object.entries(categories).map(([category, title]) => (
-        <div key={category} className="mb-6">
-          <h3 className="text-sm font-semibold mb-3 text-gray-600 dark:text-gray-400 uppercase tracking-wider">
-            {title}
-          </h3>
-
-          <div className="space-y-2">
-            {groupedNodes[category]?.map((node) => (
-              <div
-                key={node.type}
-                draggable
-                onDragStart={(event) => onDragStart(event, node.type)}
-                className="p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg cursor-move hover:shadow-md transition-shadow"
-              >
-                <div className="flex items-start gap-3">
-                  <div className={`${node.color} p-2 rounded-md`}>
-                    <node.icon className="h-4 w-4 text-white" />
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm text-gray-900 dark:text-white">
-                      {node.label}
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                      {node.description}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+      {Object.keys(filteredGroupedNodes).length === 0 ? (
+        <div className="text-center py-8">
+          <p className="text-gray-500 dark:text-gray-400 text-sm">
+            No nodes found matching "{searchQuery}"
+          </p>
         </div>
-      ))}
+      ) : (
+        Object.entries(categories).map(([category, title]) => {
+          if (!filteredGroupedNodes[category]) return null;
+
+          return (
+            <div key={category} className="mb-6">
+              <h3 className="text-sm font-semibold mb-3 text-gray-600 dark:text-gray-400 uppercase tracking-wider">
+                {title}
+              </h3>
+              <div className="space-y-2">
+                {filteredGroupedNodes[category]?.map((node) => (
+                  <div
+                    key={node.type}
+                    draggable
+                    onDragStart={(event) => onDragStart(event, node.type)}
+                    className="p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg cursor-move hover:shadow-md transition-shadow"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={`${node.color} p-2 rounded-md`}>
+                        <node.icon className="h-4 w-4 text-white" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm text-gray-900 dark:text-white">
+                          {node.label}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                          {node.description}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })
+      )}
 
       <div className="mt-8 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
         <p className="text-xs text-blue-800 dark:text-blue-200">
@@ -320,6 +408,7 @@ export default function Sidebar({ onExecute, isExecuting }: SidebarProps) {
           file.
         </p>
       </div>
+    {/* Close sidebar container */}
     </div>
   );
 }

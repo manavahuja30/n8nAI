@@ -1,4 +1,7 @@
-import { Node, Edge } from "reactflow";
+import { Edge, Node } from "reactflow";
+
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
 export type NodeType =
   | "webhook"
@@ -11,7 +14,8 @@ export type NodeType =
   | "dataTransform"
   | "sendEmail"
   | "ifElse"
-  | "delay";
+  | "delay"
+  | "switch";
 
 export interface NodeData {
   label: string;
@@ -26,7 +30,12 @@ export interface WorkflowNode extends Node {
   data: NodeData;
 }
 
-export type WorkflowEdge = Edge;
+export interface WorkflowEdgeData {
+  branch?: string;
+  displayLabel?: string;
+}
+
+export type WorkflowEdge = Edge<WorkflowEdgeData>;
 
 export interface SavedWorkflow {
   id: string;

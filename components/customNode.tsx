@@ -7,8 +7,9 @@ import { nodeDefinitions } from "@/lib/node-definitions";
 import { WorkflowNode } from "@/lib/types";
 import { Settings, CheckCircle, AlertCircle, Loader2, X } from "lucide-react";
 import { useWorkflowStore } from "@/lib/store";
+import { getNodeOutputHandles } from "@/lib/node-helpers";
 
-function customNode({ data, id, selected }: NodeProps<WorkflowNode["data"]>) {
+function CustomNode({ data, id, selected }: NodeProps<WorkflowNode["data"]>) {
   const definition = nodeDefinitions[data.type];
   const { deleteNode } = useWorkflowStore();
 
@@ -23,6 +24,8 @@ function customNode({ data, id, selected }: NodeProps<WorkflowNode["data"]>) {
       deleteNode(id);
     }
   };
+
+  const outputHandles = getNodeOutputHandles(data.type, data.config);
 
   return (
     <div
@@ -39,7 +42,7 @@ function customNode({ data, id, selected }: NodeProps<WorkflowNode["data"]>) {
         <Handle
           type="target"
           position={Position.Left}
-          className="!w-3 !h-3 !bg-blue-500 !border-2 !border-white"
+          className="w-3! h-3! bg-blue-500! border-2! border-white!"
         />
       )}
 
@@ -100,14 +103,32 @@ function customNode({ data, id, selected }: NodeProps<WorkflowNode["data"]>) {
         )}
       </div>
 
-      {/* Output Handle */}
-      <Handle
-        type="source"
-        position={Position.Right}
-        className="!w-3 !h-3 !bg-blue-500 !border-2 !border-white"
-      />
+      {/* Output Handles */}
+      {outputHandles ? (
+        <div className="absolute inset-y-0 right-0 flex flex-col justify-center gap-2 pr-1">
+          {outputHandles.map((handle) => (
+            <div
+              key={handle.id}
+              className="flex items-center justify-end"
+            >
+              <Handle
+                id={handle.id}
+                type="source"
+                position={Position.Right}
+                className="w-3! h-3! bg-blue-500! border-2! border-white!"
+              />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Handle
+          type="source"
+          position={Position.Right}
+          className="w-3! h-3! bg-blue-500! border-2! border-white!"
+        />
+      )}
     </div>
   );
 }
 
-export default memo(customNode);
+export default memo(CustomNode);
