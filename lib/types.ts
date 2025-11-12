@@ -28,9 +28,24 @@ export interface WorkflowNode extends Node {
 
 export type WorkflowEdge = Edge;
 
+export interface SavedWorkflow {
+  id: string;
+  name: string;
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+  timestamp: number;
+}
+
+export interface WorkflowSnapshot {
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+}
+
 export interface WorkflowState {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
+  history: WorkflowSnapshot[];
+  historyIndex: number;
   addNode: (node: WorkflowNode) => void;
   updateNode: (id: string, data: Partial<NodeData>) => void;
   deleteNode: (id: string) => void;
@@ -39,6 +54,18 @@ export interface WorkflowState {
   setNodes: (nodes: WorkflowNode[]) => void;
   setEdges: (edges: WorkflowEdge[]) => void;
   clearWorkflow: () => void;
+  duplicateNode: (id: string) => void;
+  saveWorkflow: (name: string) => string;
+  loadWorkflow: (id: string) => void;
+  getSavedWorkflows: () => SavedWorkflow[];
+  deleteSavedWorkflow: (id: string) => void;
+  exportWorkflow: () => string;
+  importWorkflow: (json: string) => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
+  saveToHistory: () => void;
 }
 
 export interface NodeExecutionContext {

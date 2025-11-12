@@ -20,7 +20,7 @@ export default function NodeConfigPanel({
   nodeId,
   onClose,
 }: NodeConfigPanelProps) {
-  const { nodes, updateNode } = useWorkflowStore();
+  const { nodes, edges, updateNode } = useWorkflowStore();
   const node = nodes.find((n) => n.id === nodeId);
 
   const [config, setConfig] = useState<Record<string, any>>(
@@ -37,6 +37,16 @@ export default function NodeConfigPanel({
 
   const definition = nodeDefinitions[node.data.type];
   if (!definition) return null;
+
+  // Get input data from connected source nodes
+  const inputEdges = (edges as any[]).filter((e: any) => e.target === nodeId);
+  const inputData = inputEdges.map((edge: any) => {
+    const sourceNode = nodes.find((n) => n.id === edge.source);
+    return {
+      from: sourceNode?.data.label || sourceNode?.id,
+      data: sourceNode?.data.output,
+    };
+  });
 
   const handleSave = () => {
     updateNode(nodeId, { config });
@@ -67,6 +77,31 @@ export default function NodeConfigPanel({
       </div>
 
       <div className="p-4 space-y-4">
+        {/* Input Preview */}
+        {inputData.length > 0 && (
+          <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+            <h4 className="text-sm font-semibold text-blue-700 dark:text-blue-300 mb-2">
+              Input Data
+            </h4>
+            {inputData.map((input, idx) => (
+              <div key={idx} className="mb-2 last:mb-0">
+                <div className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-1">
+                  From: {input.from}
+                </div>
+                {input.data ? (
+                  <pre className="text-xs text-blue-800 dark:text-blue-200 overflow-x-auto bg-white dark:bg-gray-900 p-2 rounded border border-blue-200 dark:border-blue-700">
+                    {JSON.stringify(input.data, null, 2)}
+                  </pre>
+                ) : (
+                  <div className="text-xs text-blue-600 dark:text-blue-400 italic">
+                    No data available (node not executed yet)
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
         {definition.configFields.map((field) => (
           <div key={field.name}>
             <Label className="text-gray-700 dark:text-gray-300">
